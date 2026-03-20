@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import ChatStreamIn
+from app.config import get_settings
 from app.db import conversations as conv_repo
 from app.db.session import get_db
 from app.streaming import map_graph_events
@@ -34,7 +35,11 @@ async def chat_stream(
         await conv_repo.touch_conversation(session, body.thread_id)
 
     payload = {"messages": [HumanMessage(content=body.message)]}
-    config: dict = {"configurable": {"thread_id": str(body.thread_id)}}
+    settings = get_settings()
+    config: dict = {
+        "configurable": {"thread_id": str(body.thread_id)},
+        "recursion_limit": settings.langgraph_recursion_limit,
+    }
 
     thread_id_str = str(body.thread_id)
 

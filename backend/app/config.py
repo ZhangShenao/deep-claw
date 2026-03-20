@@ -18,6 +18,9 @@ class Settings(BaseSettings):
 
     cors_origins: str = "*"
 
+    # 与 deepagents 默认 1000 对齐；传入 astream_events 的 config 需显式带上，否则会回落到 LangGraph 默认 25
+    langgraph_recursion_limit: int = 1000
+
 
 @lru_cache
 def get_settings() -> Settings:

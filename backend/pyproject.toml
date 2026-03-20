@@ -30,6 +30,9 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
+# 与模块级 SQLAlchemy async_engine 共用同一 asyncio loop，避免 asyncpg 报
+# "Future attached to a different loop"（fixture 与测试本体须同一 loop）
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 pythonpath = ["."]
