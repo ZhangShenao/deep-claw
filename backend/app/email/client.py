@@ -88,20 +88,87 @@ class ImapClient:
     def _connect(self, host: str, port: int) -> imaplib.IMAP4_SSL:
         return imaplib.IMAP4_SSL(host=host, port=port, timeout=self.timeout_seconds)
 
-    def _select_mailbox(self, client: imaplib.IMAP4_SSL, folder_name: str) -> int | None:
-        status, _ = client.select(folder_name)
-        if status != "OK":
-            raise RuntimeError(f"failed to select mailbox {folder_name}")
-        response = client.response("UIDVALIDITY")
-        if not response or not response[1]:
-            return None
-        value = response[1][0]
-        if isinstance(value, bytes):
-            value = value.decode("utf-8", errors="ignore")
+    def _send_client_id(self, client: imaplib.IMAP4_SSL) -> None:
         try:
-            return int(str(value))
-        except ValueError:
-            return None
+            client.xatom("ID", '("name" "Deep-Claw" "version" "0.1" "vendor" "OpenAI")')
+        except Exception:
+            pass
+
+    def _is_unsafe_login_response(self, data: object) -> bool:
+        if not data:
+            return False
+        if isinstance(data, (list, tuple)):
+            parts = []
+            for item in data:
+                if isinstance(item, bytes):
+                    parts.append(item.decode("utf-8", errors="ignore"))
+                else:
+                    parts.append(str(item))
+            text = " ".join(parts)
+        elif isinstance(data, bytes):
+            text = data.decode("utf-8", errors="ignore")
+        else:
+            text = str(data)
+        return "unsafe login" in text.lower()
+
+    def _extract_mailbox_name(self, raw_line: bytes) -> str | None:
+        decoded = raw_line.decode("utf-8", errors="ignore").strip()
+        matches = re.findall(r'"([^"]+)"', decoded)
+        if matches:
+            return matches[-1]
+        return None
+
+    def _discover_mailbox_candidates(self, client: imaplib.IMAP4_SSL, folder_name: str) -> list[str]:
+        candidates: list[str] = []
+        if folder_name:
+            candidates.append(folder_name)
+
+        try:
+            status, data = client.list()
+        except Exception:
+            return candidates
+        if status != "OK" or not data:
+            return candidates
+
+        for item in data:
+            if not isinstance(item, bytes):
+                continue
+            decoded = item.decode("utf-8", errors="ignore")
+            mailbox_name = self._extract_mailbox_name(item)
+            if mailbox_name is None:
+                continue
+            lowered = mailbox_name.lower()
+            if "\\inbox" in decoded.lower() or lowered == "inbox" or mailbox_name in {"收件箱", "Inbox"}:
+                if mailbox_name not in candidates:
+                    candidates.append(mailbox_name)
+
+        return candidates
+
+    def _select_mailbox(self, client: imaplib.IMAP4_SSL, folder_name: str) -> int | None:
+        last_error: tuple[str, object] | None = None
+        for candidate in self._discover_mailbox_candidates(client, folder_name):
+            status, data = client.select(candidate)
+            if status != "OK" and self._is_unsafe_login_response(data):
+                self._send_client_id(client)
+                status, data = client.select(candidate)
+            if status == "OK":
+                response = client.response("UIDVALIDITY")
+                if not response or not response[1]:
+                    return None
+                value = response[1][0]
+                if isinstance(value, bytes):
+                    value = value.decode("utf-8", errors="ignore")
+                try:
+                    return int(str(value))
+                except ValueError:
+                    return None
+            last_error = (candidate, data)
+
+        if last_error is None:
+            raise RuntimeError(f"failed to select mailbox {folder_name}")
+        candidate, data = last_error
+        detail = data[0].decode("utf-8", errors="ignore") if data and isinstance(data[0], bytes) else str(data)
+        raise RuntimeError(f"failed to select mailbox {candidate}: {detail}")
 
     def _validate_connection_blocking(
         self,

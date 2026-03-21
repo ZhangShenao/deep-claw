@@ -53,8 +53,9 @@ def build_deep_agent(settings: Settings, checkpointer: BaseCheckpointSaver):
             "当用户明确要求检查邮件、总结收件箱、查看未读重点时使用。"
         ),
         "system_prompt": EMAIL_DIGEST_SYSTEM_PROMPT
-        + " 当用户要检查邮件时，先查看已接入邮箱；如存在多个邮箱，优先选择最近唯一的或请主代理澄清。"
-        + " 需要执行检查时调用 run_email_check。"
+        + " 当用户要检查邮件时，必须先调用 list_connected_email_accounts 查看已接入邮箱。"
+        + " 只允许使用该工具返回的 account_id 或 email_address，绝不能自行编造邮箱标识。"
+        + " 如仅有一个启用邮箱，可直接调用 run_email_check；如存在多个邮箱且用户未指定，先澄清。"
         + " 不要执行发信、删除、归档或标记已读。",
         "tools": [list_connected_email_accounts, run_email_check, list_email_digests],
     }

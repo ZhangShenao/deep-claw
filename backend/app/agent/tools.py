@@ -82,11 +82,34 @@ def build_list_connected_email_accounts_tool():
 
 
 def build_run_email_check_tool():
+    async def resolve_account_id(session, account_identifier: str) -> uuid.UUID:  # noqa: ANN001
+        rows = await email_accounts_repo.list_accounts(session)
+        enabled_rows = [row for row in rows if row.enabled]
+        normalized = account_identifier.strip()
+
+        if not normalized:
+            if len(enabled_rows) == 1:
+                return enabled_rows[0].id
+            raise ValueError("missing email account identifier. Use a connected account UUID or email address.")
+
+        try:
+            return uuid.UUID(normalized)
+        except ValueError:
+            account = await email_accounts_repo.get_account_by_email_address(session, normalized)
+            if account is not None:
+                return account.id
+            if len(enabled_rows) == 1:
+                return enabled_rows[0].id
+            raise ValueError(
+                f"unknown email account identifier: {account_identifier}. Use a connected account UUID or email address."
+            )
+
     @tool
     async def run_email_check(account_id: str) -> dict[str, Any]:
-        """Run a manual email check for a connected account and return the latest digest summary."""
+        """Run a manual email check for a connected account using either its UUID or email address."""
         async with get_session() as session:
-            result = await run_manual_email_check(session, uuid.UUID(account_id))
+            resolved_account_id = await resolve_account_id(session, account_id)
+            result = await run_manual_email_check(session, resolved_account_id)
 
         return {
             "digest_id": str(result.digest_id),

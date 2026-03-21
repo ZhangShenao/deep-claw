@@ -25,13 +25,16 @@ async def create_email_account(
     session: AsyncSession = Depends(get_db),
 ) -> EmailAccountOut:
     client = build_imap_client()
-    await client.validate_connection(
-        host=body.imap_host,
-        port=body.imap_port,
-        username=body.email_address,
-        credential=body.credential,
-        folder_name="INBOX",
-    )
+    try:
+        await client.validate_connection(
+            host=body.imap_host,
+            port=body.imap_port,
+            username=body.email_address,
+            credential=body.credential,
+            folder_name="INBOX",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     row = await email_accounts_repo.create_account(session, body)
     return EmailAccountOut.model_validate(row)
 

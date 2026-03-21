@@ -26,6 +26,7 @@ import {
   type NotificationStreamEvent,
   type StreamEvent,
 } from "@/lib/api";
+import { createEmailAccountFlow } from "@/lib/emailAccountFlow";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 type LogLine = { id: string; text: string; tone: "active" | "done" };
@@ -328,12 +329,18 @@ export default function ChatApp() {
     await loadList();
   }
 
-  async function onCreateEmailAccount(input: EmailAccountCreateInput) {
+  async function onCreateEmailAccount(input: EmailAccountCreateInput): Promise<boolean> {
     setCreatingEmailAccount(true);
     setError(null);
     try {
-      await createEmailAccount(input);
-      await loadEmailData();
+      const result = await createEmailAccountFlow(input, {
+        create: createEmailAccount,
+        reload: loadEmailData,
+      });
+      if (!result.ok) {
+        setError(result.error);
+      }
+      return result.ok;
     } finally {
       setCreatingEmailAccount(false);
     }

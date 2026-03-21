@@ -22,6 +22,14 @@ async def get_account(session: AsyncSession, account_id: uuid.UUID) -> EmailAcco
     return result.scalar_one_or_none()
 
 
+async def get_account_by_email_address(session: AsyncSession, email_address: str) -> EmailAccount | None:
+    normalized = email_address.strip().lower()
+    result = await session.execute(
+        select(EmailAccount).where(func.lower(EmailAccount.email_address) == normalized)
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_sync_state(session: AsyncSession, account_id: uuid.UUID, folder_name: str = "INBOX") -> EmailSyncState | None:
     result = await session.execute(
         select(EmailSyncState).where(

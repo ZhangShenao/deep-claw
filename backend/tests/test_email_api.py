@@ -14,6 +14,7 @@ from app.db.models import EmailAccount, EmailMessage
 @dataclass
 class FakeValidatedImapClient:
     validated: list[str]
+    error: Exception | None = None
 
     async def validate_connection(
         self,
@@ -24,6 +25,8 @@ class FakeValidatedImapClient:
         credential: str,
         folder_name: str,
     ) -> None:
+        if self.error is not None:
+            raise self.error
         self.validated.append(username)
 
 
@@ -69,6 +72,28 @@ async def test_create_email_account(
     assert len(rows) == 1
     assert rows[0]["email_address"] == "user@example.com"
     assert fake_imap_validation.validated == ["user@example.com"]
+
+
+@pytest.mark.asyncio
+async def test_create_email_account_returns_400_when_imap_validation_fails(
+    async_client: AsyncClient,
+    fake_imap_validation: FakeValidatedImapClient,
+) -> None:
+    fake_imap_validation.error = RuntimeError("failed to select mailbox INBOX")
+
+    payload = {
+        "email_address": "user@example.com",
+        "provider_label": "Example",
+        "imap_host": "imap.example.com",
+        "imap_port": 993,
+        "auth_type": "app_password",
+        "credential": "secret",
+        "poll_interval_minutes": 15,
+    }
+    response = await async_client.post("/api/email/accounts", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "failed to select mailbox INBOX"
 
 
 @pytest.mark.asyncio

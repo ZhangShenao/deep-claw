@@ -8,7 +8,7 @@ type EmailAccountsPanelProps = {
   accounts: EmailAccount[];
   creating: boolean;
   checkingAccountId: string | null;
-  onCreate: (input: EmailAccountCreateInput) => Promise<void>;
+  onCreate: (input: EmailAccountCreateInput) => Promise<boolean>;
   onCheckNow: (accountId: string) => Promise<void>;
 };
 
@@ -39,13 +39,16 @@ export default function EmailAccountsPanel({
 
       <form
         className="grid gap-3"
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
-          onCreate({
+          const created = await onCreate({
             ...form,
             imap_port: Number(form.imap_port),
             poll_interval_minutes: Number(form.poll_interval_minutes),
-          }).then(() => setForm(initialForm));
+          });
+          if (created) {
+            setForm(initialForm);
+          }
         }}
       >
         <input
