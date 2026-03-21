@@ -5,6 +5,7 @@ description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
     "asyncpg>=0.31.0",
+    "cryptography>=46.0.5",
     "deepagents>=0.4.11",
     "fastapi>=0.135.1",
     "langchain-core>=1.2.20",

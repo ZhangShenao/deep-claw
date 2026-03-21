@@ -16,6 +16,11 @@ class Settings(BaseSettings):
 
     tavily_api_key: str = ""
 
+    email_credential_key: str = "local-dev-email-key"
+    email_worker_poll_seconds: int = 15
+    email_digest_max_messages: int = 20
+    email_imap_timeout_seconds: int = 30
+
     cors_origins: str = "*"
 
     # 与 deepagents 默认 1000 对齐；传入 astream_events 的 config 需显式带上，否则会回落到 LangGraph 默认 25

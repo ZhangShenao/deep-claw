@@ -7,7 +7,9 @@ from pymongo import MongoClient
 from app.agent.build import build_deep_agent
 from app.api.chat import router as chat_router
 from app.api.conversations import router as conversations_router
+from app.api.email import router as email_router
 from app.api.history import router as history_router
+from app.api.notifications import router as notifications_router
 from app.config import get_settings
 from app.db.session import init_db
 from langgraph.checkpoint.mongodb import MongoDBSaver
@@ -51,6 +53,8 @@ def create_app() -> FastAPI:
 
     app.include_router(conversations_router)
     app.include_router(history_router)
+    app.include_router(email_router)
+    app.include_router(notifications_router)
     app.include_router(chat_router)
     return app
 

@@ -3,7 +3,14 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from deepagents import create_deep_agent
 
-from app.agent.tools import build_current_datetime_tool, build_internet_search
+from app.agent.email_digest_agent import EMAIL_DIGEST_SYSTEM_PROMPT
+from app.agent.tools import (
+    build_current_datetime_tool,
+    build_internet_search,
+    build_list_connected_email_accounts_tool,
+    build_list_email_digests_tool,
+    build_run_email_check_tool,
+)
 from app.config import Settings
 
 
@@ -19,6 +26,9 @@ def build_deep_agent(settings: Settings, checkpointer: BaseCheckpointSaver):
 
     internet_search = build_internet_search(settings)
     current_datetime = build_current_datetime_tool()
+    list_connected_email_accounts = build_list_connected_email_accounts_tool()
+    run_email_check = build_run_email_check_tool()
+    list_email_digests = build_list_email_digests_tool()
 
     research_subagent = {
         "name": "research",
@@ -36,10 +46,26 @@ def build_deep_agent(settings: Settings, checkpointer: BaseCheckpointSaver):
         "tools": [current_datetime, internet_search],
     }
 
+    email_subagent = {
+        "name": "email",
+        "description": (
+            "用于检查已接入邮箱、总结最新邮件、查看已有邮件摘要，并给出下一步行动建议。"
+            "当用户明确要求检查邮件、总结收件箱、查看未读重点时使用。"
+        ),
+        "system_prompt": EMAIL_DIGEST_SYSTEM_PROMPT
+        + " 当用户要检查邮件时，必须先调用 list_connected_email_accounts 查看已接入邮箱。"
+        + " 只允许使用该工具返回的 account_id 或 email_address，绝不能自行编造邮箱标识。"
+        + " 如仅有一个启用邮箱，可直接调用 run_email_check；如存在多个邮箱且用户未指定，先澄清。"
+        + " 不要执行发信、删除、归档或标记已读。",
+        "tools": [list_connected_email_accounts, run_email_check, list_email_digests],
+    }
+
     system_prompt = (
         "你是 Deep-Claw 个人助理，帮助用户完成日常对话与任务编排。"
         "回答应简洁、准确。若用户需要**深度检索、来源对比、长篇调研**，"
         "请通过 task 工具委托给子代理 `research`，不要凭空编造网页内容。"
+        "若用户明确要求检查邮件、总结最新邮件、查看收件箱重点，"
+        "请通过 task 工具委托给子代理 `email`。"
         "只要问题涉及最新、当前、今天、近期、截至目前等时间敏感信息，"
         "必须先调用 get_current_datetime，再继续回答或委托调研。"
     )
@@ -48,6 +74,6 @@ def build_deep_agent(settings: Settings, checkpointer: BaseCheckpointSaver):
         model=llm,
         system_prompt=system_prompt,
         tools=[current_datetime],
-        subagents=[research_subagent],
+        subagents=[research_subagent, email_subagent],
         checkpointer=checkpointer,
     )
