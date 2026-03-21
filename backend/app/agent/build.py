@@ -3,7 +3,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from deepagents import create_deep_agent
 
-from app.agent.tools import build_internet_search
+from app.agent.tools import build_current_datetime_tool, build_internet_search
 from app.config import Settings
 
 
@@ -18,30 +18,36 @@ def build_deep_agent(settings: Settings, checkpointer: BaseCheckpointSaver):
     )
 
     internet_search = build_internet_search(settings)
+    current_datetime = build_current_datetime_tool()
 
     research_subagent = {
         "name": "research",
         "description": (
             "用于深度网络调研：多关键词检索、对比来源、输出结构化摘要与要点。"
             "当用户需要最新网页信息、行业数据、新闻或引用来源时使用。"
+            "凡涉及最新、当前、今天、本周、本月等时效性判断，先调用 get_current_datetime。"
         ),
         "system_prompt": (
+            "你在开始任何时效性调研前，必须先调用 get_current_datetime 获取当前日期与时间。"
             "你是深度调研助手。仅使用提供的 internet_search 工具获取网络信息；"
             "综合多轮检索结果，用中文输出：摘要、分点要点、并注明信息局限。"
             "不要编造 URL 或引用。"
         ),
-        "tools": [internet_search],
+        "tools": [current_datetime, internet_search],
     }
 
     system_prompt = (
         "你是 Deep-Claw 个人助理，帮助用户完成日常对话与任务编排。"
         "回答应简洁、准确。若用户需要**深度检索、来源对比、长篇调研**，"
         "请通过 task 工具委托给子代理 `research`，不要凭空编造网页内容。"
+        "只要问题涉及最新、当前、今天、近期、截至目前等时间敏感信息，"
+        "必须先调用 get_current_datetime，再继续回答或委托调研。"
     )
 
     return create_deep_agent(
         model=llm,
         system_prompt=system_prompt,
+        tools=[current_datetime],
         subagents=[research_subagent],
         checkpointer=checkpointer,
     )
