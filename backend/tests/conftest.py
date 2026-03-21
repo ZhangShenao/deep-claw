@@ -18,12 +18,23 @@ import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import delete
 
 from app.config import get_settings
 
 get_settings.cache_clear()
 
 from app.main import app  # noqa: E402
+from app.db.base import Base  # noqa: E402
+from app.db.session import engine  # noqa: E402
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_database() -> AsyncIterator[None]:
+    async with engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            await conn.execute(delete(table))
+    yield
 
 
 @pytest_asyncio.fixture
