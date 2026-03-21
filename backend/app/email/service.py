@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from typing import Any, Protocol
 
+from app.agent.email_digest_agent import build_email_digest_agent, parse_email_digest_response
 from app.config import get_settings
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +23,10 @@ class EmailCheckResult:
     trigger_source: str
     new_message_count: int
     summary: str
+
+
+class EmailDigestAgentProtocol(Protocol):
+    async def ainvoke(self, payload: dict[str, Any]) -> dict[str, Any]: ...
 
 
 def _build_summary(messages) -> tuple[str, list[dict], list[dict], str]:
@@ -52,6 +58,50 @@ def _build_summary(messages) -> tuple[str, list[dict], list[dict], str]:
     return summary, key_points, actions, "normal"
 
 
+def _serialize_messages_for_agent(messages) -> list[dict[str, Any]]:
+    return [
+        {
+            "message_id": str(message.id),
+            "from_display": message.from_display,
+            "from_address": message.from_address,
+            "subject": message.subject,
+            "snippet": message.snippet,
+            "body_text": message.body_text,
+            "received_at": message.received_at.isoformat() if message.received_at else None,
+            "is_unread": message.is_unread,
+        }
+        for message in messages
+    ]
+
+
+async def _generate_digest_via_agent(
+    messages,
+    *,
+    digest_agent: EmailDigestAgentProtocol | None = None,
+) -> tuple[str, list[dict], list[dict], str]:
+    if not messages:
+        return _build_summary(messages)
+
+    agent = digest_agent or build_email_digest_agent(get_settings(), _serialize_messages_for_agent(messages))
+    result = await agent.ainvoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "分析这批最新同步的邮件，输出 summary、key_points、action_suggestions、priority 的 JSON。",
+                }
+            ]
+        }
+    )
+    parsed = parse_email_digest_response(result)
+    return (
+        parsed["summary"],
+        parsed["key_points"],
+        parsed["action_suggestions"],
+        parsed["priority"],
+    )
+
+
 def build_imap_client() -> ImapClientProtocol:
     settings = get_settings()
     return ImapClient(timeout_seconds=settings.email_imap_timeout_seconds)
@@ -66,8 +116,9 @@ async def _create_digest_and_notification(
     digest_scope: str,
     messages,
     create_notification: bool,
+    digest_content: tuple[str, list[dict], list[dict], str] | None = None,
 ) -> EmailDigest:
-    summary, key_points, actions, priority = _build_summary(messages)
+    summary, key_points, actions, priority = digest_content or _build_summary(messages)
 
     digest = EmailDigest(
         account_id=account_id,
@@ -128,6 +179,7 @@ async def run_scheduled_email_check(
     account_id: uuid.UUID,
     *,
     imap_client: ImapClientProtocol | None = None,
+    digest_agent: EmailDigestAgentProtocol | None = None,
 ) -> EmailCheckResult:
     account = await email_accounts_repo.get_account(session, account_id)
     if account is None:
@@ -175,6 +227,13 @@ async def run_scheduled_email_check(
         digest_id: uuid.UUID | None = None
         summary = "没有检测到新的邮件。"
         if stored_messages:
+            try:
+                digest_content = await _generate_digest_via_agent(
+                    stored_messages,
+                    digest_agent=digest_agent,
+                )
+            except Exception:
+                digest_content = _build_summary(stored_messages)
             digest = await _create_digest_and_notification(
                 session,
                 account_id=account.id,
@@ -183,6 +242,7 @@ async def run_scheduled_email_check(
                 digest_scope="new_messages_since_cursor",
                 messages=stored_messages,
                 create_notification=True,
+                digest_content=digest_content,
             )
             digest_id = digest.id
             summary = digest.summary

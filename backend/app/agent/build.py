@@ -3,6 +3,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from deepagents import create_deep_agent
 
+from app.agent.email_digest_agent import EMAIL_DIGEST_SYSTEM_PROMPT
 from app.agent.tools import (
     build_current_datetime_tool,
     build_internet_search,
@@ -51,13 +52,10 @@ def build_deep_agent(settings: Settings, checkpointer: BaseCheckpointSaver):
             "用于检查已接入邮箱、总结最新邮件、查看已有邮件摘要，并给出下一步行动建议。"
             "当用户明确要求检查邮件、总结收件箱、查看未读重点时使用。"
         ),
-        "system_prompt": (
-            "你是只读邮件助手。仅使用提供的邮件工具。"
-            "当用户要检查邮件时，先查看已接入邮箱；如存在多个邮箱，优先选择最近唯一的或请主代理澄清。"
-            "需要执行检查时调用 run_email_check。"
-            "输出使用中文，包含：摘要、重点、建议动作。"
-            "不要编造未同步的邮件内容，不要执行发信、删除、归档或标记已读。"
-        ),
+        "system_prompt": EMAIL_DIGEST_SYSTEM_PROMPT
+        + " 当用户要检查邮件时，先查看已接入邮箱；如存在多个邮箱，优先选择最近唯一的或请主代理澄清。"
+        + " 需要执行检查时调用 run_email_check。"
+        + " 不要执行发信、删除、归档或标记已读。",
         "tools": [list_connected_email_accounts, run_email_check, list_email_digests],
     }
 

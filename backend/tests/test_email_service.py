@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -86,6 +87,16 @@ class FakeImapClient:
         return self.fetch_result
 
 
+@dataclass
+class FakeDigestAgent:
+    response_content: str
+    payloads: list[dict]
+
+    async def ainvoke(self, payload: dict) -> dict:
+        self.payloads.append(payload)
+        return {"messages": [SimpleNamespace(content=self.response_content)]}
+
+
 def _raw_email(subject: str, body: str, *, sender: str = "alice@example.com", msg_id: str = "msg-1") -> bytes:
     return (
         f"From: Alice <{sender}>\r\n"
@@ -142,6 +153,52 @@ async def test_run_scheduled_email_check_fetches_and_persists_new_messages(db_se
     assert sync_state.last_seen_uid == 12
     assert sync_state.last_check_finished_at is not None
     assert sync_state.next_check_at is not None
+
+
+@pytest.mark.asyncio
+async def test_run_scheduled_email_check_uses_digest_agent_output(db_session: AsyncSession) -> None:
+    payload = EmailAccountCreate(
+        email_address=f"{uuid.uuid4()}@example.com",
+        provider_label="Example",
+        imap_host="imap.example.com",
+        imap_port=993,
+        credential="super-secret",
+        poll_interval_minutes=15,
+    )
+    account = await email_accounts_repo.create_account(db_session, payload)
+
+    fake_client = FakeImapClient(
+        fetch_result=ImapFetchResult(
+            uid_validity=888,
+            messages=[
+                ImapMessageEnvelope(
+                    uid=31,
+                    raw_message=_raw_email("Escalation", "Please reply before noon.", msg_id="msg-31"),
+                    flags=[],
+                ),
+            ],
+        ),
+        validated=[],
+    )
+    fake_agent = FakeDigestAgent(
+        response_content='{"summary":"Agent summary","key_points":[{"subject":"Escalation"}],"action_suggestions":[{"action":"Reply now","reason":"deadline before noon"}],"priority":"high"}',
+        payloads=[],
+    )
+
+    result = await run_scheduled_email_check(
+        db_session,
+        account.id,
+        imap_client=fake_client,
+        digest_agent=fake_agent,
+    )
+
+    assert result.summary == "Agent summary"
+    assert len(fake_agent.payloads) == 1
+
+    digests = await db_session.execute(EmailDigest.__table__.select().where(EmailDigest.account_id == account.id))
+    row = digests.first()
+    assert row is not None
+    assert row.summary == "Agent summary"
 
 
 @pytest.mark.asyncio
