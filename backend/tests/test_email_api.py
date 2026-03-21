@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.models import EmailAccount, EmailMessage
 
 
 @pytest.mark.asyncio
@@ -44,3 +47,52 @@ async def test_list_notifications_initially_empty(async_client: AsyncClient) -> 
     response = await async_client.get("/api/notifications")
     assert response.status_code == 200
     assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_check_now_creates_digest_and_notification(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    account = EmailAccount(
+        email_address="digest@example.com",
+        provider_label="Digest",
+        imap_host="imap.example.com",
+        imap_port=993,
+        credential_encrypted="stored",
+    )
+    db_session.add(account)
+    await db_session.flush()
+
+    db_session.add(
+        EmailMessage(
+            account_id=account.id,
+            folder_name="INBOX",
+            message_uid=1,
+            from_display="Alice",
+            from_address="alice@example.com",
+            subject="Need budget review",
+            snippet="Please review the budget sheet today.",
+            body_text="Please review the budget sheet today.",
+        )
+    )
+    await db_session.commit()
+
+    response = await async_client.post(f"/api/email/accounts/{account.id}/check-now")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["trigger_source"] == "manual"
+    assert body["new_message_count"] == 1
+    assert body["summary"]
+
+    response = await async_client.get("/api/email/digests")
+    assert response.status_code == 200
+    digests = response.json()
+    assert len(digests) == 1
+    assert digests[0]["account_id"] == str(account.id)
+
+    response = await async_client.get("/api/notifications")
+    assert response.status_code == 200
+    notifications = response.json()
+    assert len(notifications) == 1
+    assert notifications[0]["type"] == "email_digest_ready"

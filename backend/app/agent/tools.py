@@ -1,12 +1,17 @@
 """Tavily-backed search tool for the research sub-agent."""
 
 from datetime import datetime, timezone
+import uuid
 from typing import Any, Literal
 
 from langchain_core.tools import tool
 from tavily import TavilyClient
 
 from app.config import Settings
+from app.db import email_accounts as email_accounts_repo
+from app.db import email_messages as email_messages_repo
+from app.db.session import get_session
+from app.email.service import run_manual_email_check
 
 
 def build_current_datetime_tool():
@@ -53,3 +58,67 @@ def build_internet_search(settings: Settings):
         )
 
     return internet_search
+
+
+def build_list_connected_email_accounts_tool():
+    @tool
+    async def list_connected_email_accounts() -> list[dict[str, Any]]:
+        """List connected email accounts available for email checks."""
+        async with get_session() as session:
+            rows = await email_accounts_repo.list_accounts(session)
+
+        return [
+            {
+                "account_id": str(row.id),
+                "email_address": row.email_address,
+                "provider_label": row.provider_label,
+                "poll_interval_minutes": row.poll_interval_minutes,
+                "enabled": row.enabled,
+            }
+            for row in rows
+        ]
+
+    return list_connected_email_accounts
+
+
+def build_run_email_check_tool():
+    @tool
+    async def run_email_check(account_id: str) -> dict[str, Any]:
+        """Run a manual email check for a connected account and return the latest digest summary."""
+        async with get_session() as session:
+            result = await run_manual_email_check(session, uuid.UUID(account_id))
+
+        return {
+            "digest_id": str(result.digest_id),
+            "account_id": str(result.account_id),
+            "trigger_source": result.trigger_source,
+            "new_message_count": result.new_message_count,
+            "summary": result.summary,
+        }
+
+    return run_email_check
+
+
+def build_list_email_digests_tool():
+    @tool
+    async def list_email_digests(account_id: str | None = None) -> list[dict[str, Any]]:
+        """List stored email digests, optionally filtered by account id."""
+        async with get_session() as session:
+            rows = await email_messages_repo.list_digests(session)
+
+        if account_id:
+            rows = [row for row in rows if str(row.account_id) == account_id]
+
+        return [
+            {
+                "digest_id": str(row.id),
+                "account_id": str(row.account_id),
+                "trigger_source": row.trigger_source,
+                "summary": row.summary,
+                "priority": row.priority,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+
+    return list_email_digests

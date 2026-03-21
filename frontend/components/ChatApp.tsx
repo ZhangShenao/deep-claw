@@ -1,14 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import EmailAccountsPanel from "@/components/EmailAccountsPanel";
+import EmailDigestList from "@/components/EmailDigestList";
 import MarkdownMessage from "@/components/MarkdownMessage";
+import NotificationTray from "@/components/NotificationTray";
 import {
+  createEmailAccount,
   createConversation,
   deleteConversation,
+  fetchEmailAccounts,
+  fetchEmailDigests,
   fetchConversations,
   fetchMessages,
+  fetchNotifications,
+  markNotificationRead,
+  runEmailCheck,
   streamChat,
+  streamNotifications,
   type Conversation,
+  type EmailAccount,
+  type EmailAccountCreateInput,
+  type EmailDigest,
+  type NotificationRecord,
+  type NotificationStreamEvent,
   type StreamEvent,
 } from "@/lib/api";
 
@@ -55,11 +70,17 @@ function buildMarkdownFilename(title: string | undefined, index: number) {
 export default function ChatApp() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [emailAccounts, setEmailAccounts] = useState<EmailAccount[]>([]);
+  const [emailDigests, setEmailDigests] = useState<EmailDigest[]>([]);
+  const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
+  const [selectedDigestId, setSelectedDigestId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [steps, setSteps] = useState<LogLine[]>([]);
   const [showSteps, setShowSteps] = useState(true);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [creatingEmailAccount, setCreatingEmailAccount] = useState(false);
+  const [checkingEmailAccountId, setCheckingEmailAccountId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -88,9 +109,37 @@ export default function ChatApp() {
     setActiveId((prev) => prev ?? (list[0]?.id ?? null));
   }, []);
 
+  const loadEmailData = useCallback(async () => {
+    const [accounts, digests, noticeRows] = await Promise.all([
+      fetchEmailAccounts(),
+      fetchEmailDigests(),
+      fetchNotifications(),
+    ]);
+    setEmailAccounts(accounts);
+    setEmailDigests(digests);
+    setNotifications(noticeRows);
+    setSelectedDigestId((prev) => prev ?? (digests[0]?.id ?? null));
+  }, []);
+
   useEffect(() => {
     loadList().catch((e) => setError(String(e)));
   }, [loadList]);
+
+  useEffect(() => {
+    loadEmailData().catch((e) => setError(String(e)));
+  }, [loadEmailData]);
+
+  useEffect(() => {
+    const stop = streamNotifications((event: NotificationStreamEvent) => {
+      if (event.type === "error") {
+        return;
+      }
+      if (event.type === "notification") {
+        loadEmailData().catch((e) => setError(String(e)));
+      }
+    });
+    return stop;
+  }, [loadEmailData]);
 
   useEffect(() => {
     if (!activeId) return;
@@ -279,6 +328,41 @@ export default function ChatApp() {
     await loadList();
   }
 
+  async function onCreateEmailAccount(input: EmailAccountCreateInput) {
+    setCreatingEmailAccount(true);
+    setError(null);
+    try {
+      await createEmailAccount(input);
+      await loadEmailData();
+    } finally {
+      setCreatingEmailAccount(false);
+    }
+  }
+
+  async function onCheckEmailNow(accountId: string) {
+    setCheckingEmailAccountId(accountId);
+    setError(null);
+    try {
+      const result = await runEmailCheck(accountId);
+      await loadEmailData();
+      setSelectedDigestId(result.digest_id);
+    } finally {
+      setCheckingEmailAccountId(null);
+    }
+  }
+
+  async function onOpenNotification(notification: NotificationRecord) {
+    try {
+      setSelectedDigestId(notification.digest_id);
+      if (!notification.is_read) {
+        await markNotificationRead(notification.id);
+        await loadEmailData();
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   function onDownloadReport(content: string, index: number) {
     const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
     const href = URL.createObjectURL(blob);
@@ -349,7 +433,7 @@ export default function ChatApp() {
         </div>
       </aside>
 
-      <main className="flex min-h-0 flex-1 flex-col p-3 pt-3 md:p-4">
+      <main className="flex min-h-0 flex-1 flex-col gap-3 p-3 pt-3 md:p-4 xl:flex-row">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[32px] border border-white/8 bg-[linear-gradient(180deg,rgba(18,23,31,0.96),rgba(10,14,20,0.92))] shadow-[0_30px_120px_rgba(0,0,0,0.34)] backdrop-blur-xl">
           <header className="border-b border-white/8 px-5 py-4 md:px-7">
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -529,6 +613,22 @@ export default function ChatApp() {
             </div>
           </div>
         </div>
+
+        <aside className="flex w-full shrink-0 flex-col gap-3 xl:w-[25rem]">
+          <NotificationTray notifications={notifications} onOpen={onOpenNotification} />
+          <EmailAccountsPanel
+            accounts={emailAccounts}
+            creating={creatingEmailAccount}
+            checkingAccountId={checkingEmailAccountId}
+            onCreate={onCreateEmailAccount}
+            onCheckNow={onCheckEmailNow}
+          />
+          <EmailDigestList
+            digests={emailDigests}
+            selectedDigestId={selectedDigestId}
+            onSelect={setSelectedDigestId}
+          />
+        </aside>
       </main>
     </div>
   );

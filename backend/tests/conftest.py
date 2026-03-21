@@ -13,6 +13,7 @@ os.environ.setdefault("OPENAI_API_KEY", "ci-test-placeholder")
 os.environ.setdefault("OPENAI_BASE_URL", "http://127.0.0.1:9/v1")
 os.environ.setdefault("OPENAI_MODEL", "glm-4-plus")
 os.environ.setdefault("CORS_ORIGINS", "*")
+os.environ.setdefault("EMAIL_CREDENTIAL_KEY", "test-email-credential-key")
 
 import pytest
 import pytest_asyncio
@@ -26,6 +27,7 @@ get_settings.cache_clear()
 
 from app.main import app  # noqa: E402
 from app.db.base import Base  # noqa: E402
+from app.db.session import async_session_factory  # noqa: E402
 from app.db.session import engine  # noqa: E402
 
 
@@ -45,3 +47,9 @@ async def async_client() -> AsyncIterator[AsyncClient]:
             base_url="http://test",
         ) as client:
             yield client
+
+
+@pytest_asyncio.fixture
+async def db_session() -> AsyncIterator:
+    async with async_session_factory() as session:
+        yield session

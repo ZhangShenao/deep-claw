@@ -62,3 +62,26 @@ class NotificationOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class EmailDigestOut(BaseModel):
+    id: uuid.UUID
+    account_id: uuid.UUID
+    trigger_source: str
+    digest_scope: str
+    message_ids: list[str]
+    summary: str
+    key_points_json: list[dict]
+    action_suggestions_json: list[dict]
+    priority: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EmailCheckResultOut(BaseModel):
+    digest_id: uuid.UUID
+    account_id: uuid.UUID
+    trigger_source: str
+    new_message_count: int
+    summary: str
