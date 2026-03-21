@@ -42,6 +42,16 @@ function isNearBottom(node: HTMLDivElement, threshold = 120) {
   return node.scrollHeight - node.scrollTop - node.clientHeight <= threshold;
 }
 
+function buildMarkdownFilename(title: string | undefined, index: number) {
+  const base = (title || "deep-claw-report")
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  const stamp = new Date().toISOString().slice(0, 10);
+  return `${base || "deep-claw-report"}-${index + 1}-${stamp}.md`;
+}
+
 export default function ChatApp() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -56,11 +66,21 @@ export default function ChatApp() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const activeIdRef = useRef<string | null>(null);
   const shouldStickToBottomRef = useRef(true);
+  const historyRequestRef = useRef(0);
   const streamRef = useRef<{
     requestId: string;
     conversationId: string;
     controller: AbortController;
   } | null>(null);
+
+  const toChatMessages = useCallback((rows: Awaited<ReturnType<typeof fetchMessages>>) => {
+    return rows
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      }));
+  }, []);
 
   const loadList = useCallback(async () => {
     const list = await fetchConversations();
@@ -74,20 +94,21 @@ export default function ChatApp() {
 
   useEffect(() => {
     if (!activeId) return;
-    fetchMessages(activeId)
+    activeIdRef.current = activeId;
+    const conversationId = activeId;
+    const requestId = historyRequestRef.current + 1;
+    historyRequestRef.current = requestId;
+
+    fetchMessages(conversationId)
       .then((rows) => {
-        setMessages(
-          rows
-            .filter((m) => m.role === "user" || m.role === "assistant")
-            .map((m) => ({
-              role: m.role as "user" | "assistant",
-              content: m.content,
-            })),
-        );
+        if (historyRequestRef.current !== requestId || activeIdRef.current !== conversationId) {
+          return;
+        }
+        setMessages(toChatMessages(rows));
         setSteps([]);
       })
       .catch((e) => setError(String(e)));
-  }, [activeId]);
+  }, [activeId, toChatMessages]);
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -208,6 +229,12 @@ export default function ChatApp() {
         (ev) => handleEvent(ev, requestId, conversationId),
         { signal: controller.signal },
       );
+      if (isCurrentStream(requestId, conversationId)) {
+        const rows = await fetchMessages(conversationId);
+        if (isCurrentStream(requestId, conversationId)) {
+          setMessages(toChatMessages(rows));
+        }
+      }
     } catch (e) {
       if (!(e instanceof DOMException && e.name === "AbortError") && isCurrentStream(requestId, conversationId)) {
         setError(String(e));
@@ -250,6 +277,18 @@ export default function ChatApp() {
       setSteps([]);
     }
     await loadList();
+  }
+
+  function onDownloadReport(content: string, index: number) {
+    const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = buildMarkdownFilename(activeConv?.title, index);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(href);
   }
 
   return (
@@ -371,14 +410,25 @@ export default function ChatApp() {
 
                 return (
                   <section key={i} className="rounded-[30px] border border-white/8 bg-white/4 px-5 py-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
-                    <div className="mb-3 flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-300/12 text-sm font-semibold text-emerald-100">
-                        AI
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-300/12 text-sm font-semibold text-emerald-100">
+                          AI
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-white">Deep-Claw</div>
+                          <div className="text-xs text-neutral-500">实时回复中</div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="text-sm font-medium text-white">Deep-Claw</div>
-                        <div className="text-xs text-neutral-500">实时回复中</div>
-                      </div>
+                      {m.content.trim() && !isStreamingAssistant && (
+                        <button
+                          type="button"
+                          onClick={() => onDownloadReport(m.content, i)}
+                          className="shrink-0 rounded-full border border-white/8 bg-white/5 px-3 py-1.5 text-xs text-neutral-300 transition hover:bg-white/10 hover:text-white"
+                        >
+                          下载 Markdown
+                        </button>
+                      )}
                     </div>
                     <div className="break-words text-[15px] leading-8 text-neutral-100">
                       <MarkdownMessage content={m.content} className="chat-markdown" />

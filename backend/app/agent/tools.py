@@ -1,11 +1,28 @@
 """Tavily-backed search tool for the research sub-agent."""
 
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from langchain_core.tools import tool
 from tavily import TavilyClient
 
 from app.config import Settings
+
+
+def build_current_datetime_tool():
+    @tool("get_current_datetime")
+    def get_current_datetime() -> str:
+        """Get the current local date/time and UTC date/time. Use this before answering any latest/current/today time-sensitive question."""
+
+        now_utc = datetime.now(timezone.utc)
+        now_local = now_utc.astimezone()
+        return (
+            f"Local time: {now_local.isoformat()} (timezone: {now_local.tzname() or 'local'}); "
+            f"Local date: {now_local.date().isoformat()}; "
+            f"UTC time: {now_utc.isoformat()}"
+        )
+
+    return get_current_datetime
 
 
 def build_internet_search(settings: Settings):
