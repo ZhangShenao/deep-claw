@@ -17,7 +17,7 @@ from app.db.models import EmailDigest, EmailMessage
 from app.email.client import ImapFetchResult, ImapMessageEnvelope
 from app.email.crypto import decrypt_secret, encrypt_secret
 from app.email.parser import normalize_email_message
-from app.email.service import run_scheduled_email_check
+from app.email.service import run_manual_email_check, run_scheduled_email_check
 from app.email.worker import run_due_account_checks_once
 
 
@@ -199,6 +199,51 @@ async def test_run_scheduled_email_check_uses_digest_agent_output(db_session: As
     row = digests.first()
     assert row is not None
     assert row.summary == "Agent summary"
+
+
+@pytest.mark.asyncio
+async def test_run_manual_email_check_uses_digest_agent_output(db_session: AsyncSession) -> None:
+    payload = EmailAccountCreate(
+        email_address=f"{uuid.uuid4()}@example.com",
+        provider_label="Example",
+        imap_host="imap.example.com",
+        imap_port=993,
+        credential="super-secret",
+        poll_interval_minutes=15,
+    )
+    account = await email_accounts_repo.create_account(db_session, payload)
+
+    message = EmailMessage(
+        account_id=account.id,
+        folder_name="INBOX",
+        message_uid=41,
+        from_display="Alice",
+        from_address="alice@example.com",
+        subject="Manual check task",
+        snippet="Please send the update before lunch.",
+        body_text="Please send the update before lunch.",
+    )
+    db_session.add(message)
+    await db_session.commit()
+
+    fake_agent = FakeDigestAgent(
+        response_content='{"summary":"Manual agent summary","key_points":[{"subject":"Manual check task"}],"action_suggestions":[{"action":"Send update","reason":"before lunch"}],"priority":"high"}',
+        payloads=[],
+    )
+
+    result = await run_manual_email_check(
+        db_session,
+        account.id,
+        digest_agent=fake_agent,
+    )
+
+    assert result.summary == "Manual agent summary"
+    assert len(fake_agent.payloads) == 1
+
+    digests = await db_session.execute(EmailDigest.__table__.select().where(EmailDigest.account_id == account.id))
+    row = digests.first()
+    assert row is not None
+    assert row.summary == "Manual agent summary"
 
 
 @pytest.mark.asyncio

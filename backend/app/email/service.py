@@ -146,12 +146,24 @@ async def _create_digest_and_notification(
     return digest
 
 
-async def run_manual_email_check(session: AsyncSession, account_id: uuid.UUID) -> EmailCheckResult:
+async def run_manual_email_check(
+    session: AsyncSession,
+    account_id: uuid.UUID,
+    *,
+    digest_agent: EmailDigestAgentProtocol | None = None,
+) -> EmailCheckResult:
     account = await email_accounts_repo.get_account(session, account_id)
     if account is None:
         raise LookupError("email account not found")
 
     messages = await email_messages_repo.list_messages_for_account(session, account_id)
+    try:
+        digest_content = await _generate_digest_via_agent(
+            messages,
+            digest_agent=digest_agent,
+        )
+    except Exception:
+        digest_content = _build_summary(messages)
     digest = await _create_digest_and_notification(
         session,
         account_id=account_id,
@@ -160,6 +172,7 @@ async def run_manual_email_check(session: AsyncSession, account_id: uuid.UUID) -
         digest_scope="all_synced_messages",
         messages=messages,
         create_notification=True,
+        digest_content=digest_content,
     )
     summary = digest.summary
 
