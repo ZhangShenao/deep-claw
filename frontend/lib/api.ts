@@ -40,7 +40,7 @@ export type StreamEvent =
   | { type: "token"; content: string }
   | { type: "tool_start"; name: string; input: unknown }
   | { type: "tool_end"; name: string; output: unknown }
-  | { type: "subagent"; phase: "start" | "end"; name: unknown }
+  | { type: "subagent"; phase: "start" | "end"; name: unknown; output?: unknown }
   | { type: "message"; role: string; content: unknown }
   | { type: "done"; thread_id: string }
   | { type: "error"; message: string };
@@ -49,11 +49,13 @@ export async function streamChat(
   threadId: string,
   message: string,
   onEvent: (ev: StreamEvent) => void,
+  options?: { signal?: AbortSignal },
 ): Promise<void> {
   const r = await fetch(`${API_BASE}/api/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ thread_id: threadId, message }),
+    signal: options?.signal,
   });
   if (!r.ok) {
     const t = await r.text();
