@@ -7,7 +7,7 @@ from app.api.schemas import EmailAccountCreate, EmailAccountOut, EmailCheckResul
 from app.db import email_accounts as email_accounts_repo
 from app.db import email_messages as email_messages_repo
 from app.db.session import get_db as db_session_dep
-from app.email.service import run_manual_email_check
+from app.email.service import build_imap_client, run_manual_email_check
 
 router = APIRouter(tags=["email"])
 get_db = db_session_dep
@@ -24,6 +24,14 @@ async def create_email_account(
     body: EmailAccountCreate,
     session: AsyncSession = Depends(get_db),
 ) -> EmailAccountOut:
+    client = build_imap_client()
+    await client.validate_connection(
+        host=body.imap_host,
+        port=body.imap_port,
+        username=body.email_address,
+        credential=body.credential,
+        folder_name="INBOX",
+    )
     row = await email_accounts_repo.create_account(session, body)
     return EmailAccountOut.model_validate(row)
 

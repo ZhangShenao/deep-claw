@@ -40,6 +40,36 @@ services:
       LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
       LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-deep-claw}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      EMAIL_CREDENTIAL_KEY: ${EMAIL_CREDENTIAL_KEY:-local-dev-email-key}
+      EMAIL_WORKER_POLL_SECONDS: ${EMAIL_WORKER_POLL_SECONDS:-15}
+      EMAIL_DIGEST_MAX_MESSAGES: ${EMAIL_DIGEST_MAX_MESSAGES:-20}
+      EMAIL_IMAP_TIMEOUT_SECONDS: ${EMAIL_IMAP_TIMEOUT_SECONDS:-30}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_started
+
+  email-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.email.worker"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/deep_claw
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DB_NAME: deep_claw
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-glm-4-plus}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
+      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
+      LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-deep-claw}
+      EMAIL_CREDENTIAL_KEY: ${EMAIL_CREDENTIAL_KEY:-local-dev-email-key}
+      EMAIL_WORKER_POLL_SECONDS: ${EMAIL_WORKER_POLL_SECONDS:-15}
+      EMAIL_DIGEST_MAX_MESSAGES: ${EMAIL_DIGEST_MAX_MESSAGES:-20}
+      EMAIL_IMAP_TIMEOUT_SECONDS: ${EMAIL_IMAP_TIMEOUT_SECONDS:-30}
     depends_on:
       postgres:
         condition: service_healthy

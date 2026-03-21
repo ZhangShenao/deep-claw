@@ -2,11 +2,36 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import EmailAccount, EmailMessage
+
+
+@dataclass
+class FakeValidatedImapClient:
+    validated: list[str]
+
+    async def validate_connection(
+        self,
+        *,
+        host: str,
+        port: int,
+        username: str,
+        credential: str,
+        folder_name: str,
+    ) -> None:
+        self.validated.append(username)
+
+
+@pytest.fixture(autouse=True)
+def fake_imap_validation(monkeypatch: pytest.MonkeyPatch) -> FakeValidatedImapClient:
+    client = FakeValidatedImapClient(validated=[])
+    monkeypatch.setattr("app.api.email.build_imap_client", lambda: client)
+    return client
 
 
 @pytest.mark.asyncio
@@ -17,7 +42,10 @@ async def test_list_email_accounts_initially_empty(async_client: AsyncClient) ->
 
 
 @pytest.mark.asyncio
-async def test_create_email_account(async_client: AsyncClient) -> None:
+async def test_create_email_account(
+    async_client: AsyncClient,
+    fake_imap_validation: FakeValidatedImapClient,
+) -> None:
     payload = {
         "email_address": "user@example.com",
         "provider_label": "Example",
@@ -40,6 +68,7 @@ async def test_create_email_account(async_client: AsyncClient) -> None:
     rows = response.json()
     assert len(rows) == 1
     assert rows[0]["email_address"] == "user@example.com"
+    assert fake_imap_validation.validated == ["user@example.com"]
 
 
 @pytest.mark.asyncio

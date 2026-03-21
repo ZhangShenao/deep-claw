@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from email import policy
 from email.parser import BytesParser
-from email.utils import parseaddr
+from email.utils import parseaddr, parsedate_to_datetime
 
 
 @dataclass(slots=True)
@@ -11,6 +12,8 @@ class NormalizedEmail:
     subject: str
     from_display: str
     from_address: str
+    message_id_header: str
+    received_at: datetime | None
     body_text: str
     snippet: str
 
@@ -48,6 +51,8 @@ def normalize_email_message(raw_bytes: bytes) -> NormalizedEmail:
         subject=message.get("Subject", ""),
         from_display=from_display,
         from_address=from_address,
+        message_id_header=message.get("Message-ID", ""),
+        received_at=parsedate_to_datetime(message.get("Date")) if message.get("Date") else None,
         body_text=body_text,
         snippet=snippet,
     )

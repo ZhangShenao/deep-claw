@@ -3,17 +3,20 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
+from app.config import get_settings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import email_accounts as email_accounts_repo
 from app.db import email_messages as email_messages_repo
 from app.db import notifications as notifications_repo
 from app.db.models import EmailDigest
+from app.email.client import ImapClient, ImapClientProtocol
+from app.email.crypto import decrypt_secret
 
 
 @dataclass(slots=True)
 class EmailCheckResult:
-    digest_id: uuid.UUID
+    digest_id: uuid.UUID | None
     account_id: uuid.UUID
     trigger_source: str
     new_message_count: int
@@ -49,18 +52,27 @@ def _build_summary(messages) -> tuple[str, list[dict], list[dict], str]:
     return summary, key_points, actions, "normal"
 
 
-async def run_manual_email_check(session: AsyncSession, account_id: uuid.UUID) -> EmailCheckResult:
-    account = await email_accounts_repo.get_account(session, account_id)
-    if account is None:
-        raise LookupError("email account not found")
+def build_imap_client() -> ImapClientProtocol:
+    settings = get_settings()
+    return ImapClient(timeout_seconds=settings.email_imap_timeout_seconds)
 
-    messages = await email_messages_repo.list_messages_for_account(session, account_id)
+
+async def _create_digest_and_notification(
+    session: AsyncSession,
+    *,
+    account_id: uuid.UUID,
+    email_address: str,
+    trigger_source: str,
+    digest_scope: str,
+    messages,
+    create_notification: bool,
+) -> EmailDigest:
     summary, key_points, actions, priority = _build_summary(messages)
 
     digest = EmailDigest(
         account_id=account_id,
-        trigger_source="manual",
-        digest_scope="all_synced_messages",
+        trigger_source=trigger_source,
+        digest_scope=digest_scope,
         message_ids=[str(message.id) for message in messages],
         summary=summary,
         key_points_json=key_points,
@@ -70,14 +82,35 @@ async def run_manual_email_check(session: AsyncSession, account_id: uuid.UUID) -
     session.add(digest)
     await session.flush()
 
-    await notifications_repo.create_notification(
+    if create_notification:
+        await notifications_repo.create_notification(
+            session,
+            notification_type="email_digest_ready",
+            account_id=account_id,
+            digest_id=digest.id,
+            title=f"{email_address} 邮件摘要已生成",
+            body=summary,
+        )
+
+    return digest
+
+
+async def run_manual_email_check(session: AsyncSession, account_id: uuid.UUID) -> EmailCheckResult:
+    account = await email_accounts_repo.get_account(session, account_id)
+    if account is None:
+        raise LookupError("email account not found")
+
+    messages = await email_messages_repo.list_messages_for_account(session, account_id)
+    digest = await _create_digest_and_notification(
         session,
-        notification_type="email_digest_ready",
         account_id=account_id,
-        digest_id=digest.id,
-        title=f"{account.email_address} 邮件摘要已生成",
-        body=summary,
+        email_address=account.email_address,
+        trigger_source="manual",
+        digest_scope="all_synced_messages",
+        messages=messages,
+        create_notification=True,
     )
+    summary = digest.summary
 
     await session.commit()
 
@@ -88,3 +121,96 @@ async def run_manual_email_check(session: AsyncSession, account_id: uuid.UUID) -
         new_message_count=len(messages),
         summary=summary,
     )
+
+
+async def run_scheduled_email_check(
+    session: AsyncSession,
+    account_id: uuid.UUID,
+    *,
+    imap_client: ImapClientProtocol | None = None,
+) -> EmailCheckResult:
+    account = await email_accounts_repo.get_account(session, account_id)
+    if account is None:
+        raise LookupError("email account not found")
+
+    client = imap_client or build_imap_client()
+    sync_state = await email_accounts_repo.mark_sync_started(session, account.id)
+    credential = decrypt_secret(account.credential_encrypted, get_settings())
+
+    try:
+        fetch_result = await client.fetch_new_messages(
+            host=account.imap_host,
+            port=account.imap_port,
+            username=account.email_address,
+            credential=credential,
+            folder_name=sync_state.folder_name,
+            last_seen_uid=sync_state.last_seen_uid,
+        )
+
+        if (
+            sync_state.uid_validity is not None
+            and fetch_result.uid_validity is not None
+            and sync_state.uid_validity != fetch_result.uid_validity
+        ):
+            fetch_result = await client.fetch_new_messages(
+                host=account.imap_host,
+                port=account.imap_port,
+                username=account.email_address,
+                credential=credential,
+                folder_name=sync_state.folder_name,
+                last_seen_uid=None,
+            )
+
+        stored_messages = await email_messages_repo.store_fetched_messages(
+            session,
+            account_id=account.id,
+            folder_name=sync_state.folder_name,
+            envelopes=fetch_result.messages,
+        )
+
+        last_seen_uid = sync_state.last_seen_uid
+        if fetch_result.messages:
+            last_seen_uid = max(message.uid for message in fetch_result.messages)
+
+        digest_id: uuid.UUID | None = None
+        summary = "没有检测到新的邮件。"
+        if stored_messages:
+            digest = await _create_digest_and_notification(
+                session,
+                account_id=account.id,
+                email_address=account.email_address,
+                trigger_source="scheduled",
+                digest_scope="new_messages_since_cursor",
+                messages=stored_messages,
+                create_notification=True,
+            )
+            digest_id = digest.id
+            summary = digest.summary
+
+        await email_accounts_repo.finalize_sync(
+            session,
+            account,
+            uid_validity=fetch_result.uid_validity,
+            last_seen_uid=last_seen_uid,
+            error_message="",
+            folder_name=sync_state.folder_name,
+        )
+        await session.commit()
+        return EmailCheckResult(
+            digest_id=digest_id,
+            account_id=account.id,
+            trigger_source="scheduled",
+            new_message_count=len(stored_messages),
+            summary=summary,
+        )
+    except Exception as exc:
+        await email_accounts_repo.finalize_sync(
+            session,
+            account,
+            uid_validity=sync_state.uid_validity,
+            last_seen_uid=sync_state.last_seen_uid,
+            error_message=str(exc),
+            folder_name=sync_state.folder_name,
+        )
+        await session.commit()
+        raise
